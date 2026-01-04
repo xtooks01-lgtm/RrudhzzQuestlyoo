@@ -19,8 +19,8 @@ const LogoQ = ({ className }: { className?: string }) => (
     <path d="M50 30V50L65 65" stroke="url(#logo-gradient)" strokeWidth="8" strokeLinecap="round" strokeLinejoin="round" />
     <defs>
       <linearGradient id="logo-gradient" x1="0" y1="0" x2="100" y2="100" gradientUnits="userSpaceOnUse">
-        <stop offset="0" style={{ stopColor: 'var(--primary-color, #8b5cf6)' }} />
-        <stop offset="1" style={{ stopColor: 'var(--secondary-color, #2563eb)' }} />
+        <stop offset="0" stopColor="#8b5cf6" />
+        <stop offset="1" stopColor="#2563eb" />
       </linearGradient>
     </defs>
   </svg>
@@ -75,7 +75,7 @@ function App() {
       if (newRankXP < 0) newRankXP = 0;
 
       const newLevel = Math.floor(newXP / XP_PER_LEVEL) + 1;
-      if (newLevel > prev.level) soundService.playBadge();
+      if (newLevel > (prev.level || 1)) soundService.playBadge();
 
       return { 
         ...prev, 
@@ -121,16 +121,16 @@ function App() {
       
       <div className="fixed inset-0 bg-gradient-to-b from-indigo-950/20 via-[#020617] to-blue-950/20 pointer-events-none" />
       
-      <header className="p-6 pb-2 flex items-center justify-between sticky top-0 bg-[#020617]/90 backdrop-blur-xl z-40 border-b border-white/5 shrink-0">
+      <header className="px-6 py-4 flex items-center justify-between sticky top-0 bg-[#020617]/90 backdrop-blur-xl z-40 border-b border-white/5 shrink-0">
         <div className="flex items-center gap-2">
           <LogoQ className="w-8 h-8" />
           <span className="text-xl font-black tracking-tighter uppercase italic">Questly</span>
         </div>
         <div className="flex items-center gap-4">
           <div className="text-right">
-             <span className="text-[10px] font-black text-primary uppercase tracking-widest block">Level {user.level}</span>
-             <div className="w-16 h-1.5 bg-slate-900 rounded-full mt-1 overflow-hidden border border-white/5">
-               <div className="h-full bg-primary shadow-[0_0_8px_rgba(var(--primary-rgb),0.5)] transition-all duration-500" style={{ width: `${levelProgress}%` }} />
+             <span className="text-[10px] font-black text-primary uppercase tracking-widest block">Lvl {user.level}</span>
+             <div className="w-16 h-1 bg-slate-900 rounded-full mt-1 overflow-hidden">
+               <div className="h-full bg-primary transition-all duration-500" style={{ width: `${levelProgress}%` }} />
              </div>
           </div>
         </div>
@@ -147,12 +147,10 @@ function App() {
       <Navigation currentTab={activeTab} setTab={setActiveTab} />
 
       <style>{`
-        :root { --primary-color: #7c3aed; --secondary-color: #2563eb; --primary-rgb: 124, 58, 237; }
-        .text-primary { color: var(--primary-color); }
-        .bg-primary { background-color: var(--primary-color); }
-        .gradient-bg { background: linear-gradient(135deg, var(--primary-color) 0%, var(--secondary-color) 100%); }
+        :root { --primary: #7c3aed; }
+        .bg-primary { background-color: #7c3aed; }
+        .text-primary { color: #7c3aed; }
         .glass-card { background: rgba(15, 23, 42, 0.4); backdrop-filter: blur(20px); border: 1px solid rgba(255,255,255,0.05); }
-        input, select { -webkit-appearance: none; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
         .animate-fadeIn { animation: fadeIn 0.3s ease-out forwards; }
       `}</style>

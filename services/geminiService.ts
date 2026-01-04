@@ -1,29 +1,13 @@
 
 import { GoogleGenAI, Type, Modality } from "@google/genai";
-import { ChatModel, PracticeQuestion, MasteryChallenge, SuggestedTask, Task } from "../types";
+import { ChatModel, Task } from "../types";
 
 const getAI = () => new GoogleGenAI({ apiKey: process.env.API_KEY });
 
-const AI_TIMEOUT_MS = 15000; 
-const FALLBACK_MESSAGE = "Sensor interference detected. Maintain mission parameters and re-attempt contact."; 
+const FALLBACK_MESSAGE = "Tactical link failure. Re-establish connection and try again."; 
 
-async function withTimeout<T>(promise: Promise<T>, fallback: T): Promise<T> {
-  let timeoutId: any;
-  const timeoutPromise = new Promise<T>((resolve) => {
-    timeoutId = setTimeout(() => resolve(fallback), AI_TIMEOUT_MS);
-  });
-
-  return Promise.race([
-    promise.then(val => {
-      clearTimeout(timeoutId);
-      return val;
-    }).catch(() => {
-      clearTimeout(timeoutId);
-      return fallback;
-    }),
-    timeoutPromise
-  ]);
-}
+// Singleton AudioContext to prevent initialization lag
+let globalAudioCtx: AudioContext | null = null;
 
 export function decode(base64: string) {
   const binaryString = atob(base64);
@@ -41,22 +25,18 @@ export async function decodeAudioData(
   sampleRate: number,
   numChannels: number,
 ): Promise<AudioBuffer> {
-  try {
-    const dataInt16 = new Int16Array(data.buffer, data.byteOffset, Math.floor(data.byteLength / 2));
-    const frameCount = dataInt16.length / numChannels;
-    const buffer = ctx.createBuffer(numChannels, frameCount, sampleRate);
+  // Use a safer way to get the Int16Array from the buffer
+  const dataInt16 = new Int16Array(data.buffer, data.byteOffset, Math.floor(data.byteLength / 2));
+  const frameCount = dataInt16.length / numChannels;
+  const buffer = ctx.createBuffer(numChannels, frameCount, sampleRate);
 
-    for (let channel = 0; channel < numChannels; channel++) {
-      const channelData = buffer.getChannelData(channel);
-      for (let i = 0; i < frameCount; i++) {
-        channelData[i] = dataInt16[i * numChannels + channel] / 32768.0;
-      }
+  for (let channel = 0; channel < numChannels; channel++) {
+    const channelData = buffer.getChannelData(channel);
+    for (let i = 0; i < frameCount; i++) {
+      channelData[i] = dataInt16[i * numChannels + channel] / 32768.0;
     }
-    return buffer;
-  } catch (e) {
-    console.error("Audio Decoding Failure:", e);
-    return ctx.createBuffer(numChannels, 1, sampleRate);
   }
+  return buffer;
 }
 
 export const chatWithRudhh = async (
@@ -71,14 +51,21 @@ export const chatWithRudhh = async (
   // Requirement: Fast responses use flash-lite, complex use pro-preview with thinkingBudget
   const modelName = isThinkingMode ? 'gemini-3-pro-preview' : 'gemini-2.5-flash-lite-latest';
   
-  const systemInstruction = `You are Dr. Rudhh, a legendary academic mentor and tactical productivity coach. 
-  Context: The student has ${tasks.length} active quests.
-  Rules:
-  - Professional, tactical, and slightly eccentric tone.
-  - Bullet points for structure.
-  - No emojis.
-  - Max 250 words.
-  - If in thinking mode, provide profound, multi-layered academic strategy.`;
+  const activeTasksSummary = tasks.filter(t => !t.isCompleted)
+    .map(t => `- ${t.title} (Active: ${t.startTime} to ${t.endTime})`).join('\n');
+
+  const systemInstruction = `You are Dr. Rudhh, a legendary academic strategist and mentor.
+  Mission: Help the student achieve peak cognitive performance and perfect schedule management.
+  
+  CURRENT OPERATIONS CONTEXT:
+  ${activeTasksSummary || "No active missions currently scheduled."}
+
+  OPERATIONAL GUIDELINES:
+  1. Persona: Professional, tactical, authoritative, and brilliantly eccentric.
+  2. Tone: "Academic Commander."
+  3. Formatting: Bold headers, clean bullet points, absolute clarity.
+  4. Constraints: No emojis. Max 180 words.
+  5. Behavior: For schedule questions, prioritize efficiency. For study questions, provide first-principles breakdowns.`;
 
   try {
     const response = await ai.models.generateContent({
@@ -107,7 +94,7 @@ export const chatWithRudhh = async (
       thinking: thinkingText || undefined
     };
   } catch (err) {
-    console.error("Tactical Link Failure:", err);
+    console.error("Neural Link Error:", err);
     return { text: FALLBACK_MESSAGE, modelName };
   }
 };
@@ -115,9 +102,16 @@ export const chatWithRudhh = async (
 export const speakResponse = async (text: string) => {
   const ai = getAI();
   try {
+    if (!globalAudioCtx) {
+      globalAudioCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
+    }
+    if (globalAudioCtx.state === 'suspended') {
+      await globalAudioCtx.resume();
+    }
+
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash-preview-tts",
-      contents: [{ parts: [{ text: `Speak concisely: ${text}` }] }],
+      contents: [{ parts: [{ text: `Respond clearly: ${text}` }] }],
       config: {
         responseModalities: [Modality.AUDIO],
         speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Puck' } } },
@@ -125,18 +119,16 @@ export const speakResponse = async (text: string) => {
     });
 
     const parts = response.candidates?.[0]?.content?.parts;
-    const audioPart = parts?.find(p => p.inlineData?.data);
-    const base64Audio = audioPart?.inlineData?.data;
+    const audioData = parts?.find(p => p.inlineData?.data)?.inlineData?.data;
 
-    if (base64Audio) {
-      const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
-      const audioBuffer = await decodeAudioData(decode(base64Audio), audioCtx, 24000, 1);
-      const source = audioCtx.createBufferSource();
+    if (audioData && globalAudioCtx) {
+      const audioBuffer = await decodeAudioData(decode(audioData), globalAudioCtx, 24000, 1);
+      const source = globalAudioCtx.createBufferSource();
       source.buffer = audioBuffer;
-      source.connect(audioCtx.destination);
+      source.connect(globalAudioCtx.destination);
       source.start();
     }
   } catch (err) {
-    console.warn("TTS Module Offline:", err);
+    console.warn("TTS Synthesis Offline");
   }
 };
