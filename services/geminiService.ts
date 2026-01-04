@@ -1,12 +1,11 @@
 
-import { GoogleGenAI, Type, Modality } from "@google/genai";
+import { GoogleGenAI, Type, Modality, GenerateContentResponse } from "@google/genai";
 import { ChatModel, Task } from "../types";
 
 const getAI = () => new GoogleGenAI({ apiKey: process.env.API_KEY });
 
-const FALLBACK_MESSAGE = "Tactical link failure. Re-establish connection and try again."; 
+const FALLBACK_MESSAGE = "Neural link interrupted. Re-connecting..."; 
 
-// Singleton AudioContext to prevent initialization lag
 let globalAudioCtx: AudioContext | null = null;
 
 export function decode(base64: string) {
@@ -25,7 +24,6 @@ export async function decodeAudioData(
   sampleRate: number,
   numChannels: number,
 ): Promise<AudioBuffer> {
-  // Use a safer way to get the Int16Array from the buffer
   const dataInt16 = new Int16Array(data.buffer, data.byteOffset, Math.floor(data.byteLength / 2));
   const frameCount = dataInt16.length / numChannels;
   const buffer = ctx.createBuffer(numChannels, frameCount, sampleRate);
@@ -39,63 +37,71 @@ export async function decodeAudioData(
   return buffer;
 }
 
-export const chatWithRudhh = async (
+export const chatWithRudhhStream = async (
   input: string, 
   history: any[], 
   isThinkingMode: boolean = false,
-  tasks: Task[] = []
-): Promise<{ text: string, modelName: string, groundingChunks?: any[], thinking?: string }> => {
+  tasks: Task[] = [],
+  onChunk: (text: string, thinking?: string) => void
+): Promise<{ modelName: string, groundingChunks?: any[] }> => {
   const ai = getAI();
-  const needsSearch = /latest|news|current|who is|weather|today's|price|events/i.test(input);
-  
-  // Requirement: Fast responses use flash-lite, complex use pro-preview with thinkingBudget
-  const modelName = isThinkingMode ? 'gemini-3-pro-preview' : 'gemini-2.5-flash-lite-latest';
+  // Using gemini-3-flash-preview for ultra-fast, "under 6s" responses.
+  const modelName = isThinkingMode ? 'gemini-3-pro-preview' : 'gemini-3-flash-preview';
   
   const activeTasksSummary = tasks.filter(t => !t.isCompleted)
-    .map(t => `- ${t.title} (Active: ${t.startTime} to ${t.endTime})`).join('\n');
+    .map(t => `- ${t.title}`).join(', ');
 
-  const systemInstruction = `You are Dr. Rudhh, a legendary academic strategist and mentor.
-  Mission: Help the student achieve peak cognitive performance and perfect schedule management.
-  
-  CURRENT OPERATIONS CONTEXT:
-  ${activeTasksSummary || "No active missions currently scheduled."}
-
-  OPERATIONAL GUIDELINES:
-  1. Persona: Professional, tactical, authoritative, and brilliantly eccentric.
-  2. Tone: "Academic Commander."
-  3. Formatting: Bold headers, clean bullet points, absolute clarity.
-  4. Constraints: No emojis. Max 180 words.
-  5. Behavior: For schedule questions, prioritize efficiency. For study questions, provide first-principles breakdowns.`;
+  const systemInstruction = `You are Dr. Rudhh, a tactical academic mentor. 
+  Current Quests: ${activeTasksSummary || "None"}.
+  Rules: Be concise, tactical, and fast. No emojis. Use bold headers. Max 100 words.`;
 
   try {
-    const response = await ai.models.generateContent({
+    const responseStream = await ai.models.generateContentStream({
       model: modelName,
       contents: [...history, { role: 'user', parts: [{ text: input }] }],
       config: { 
         systemInstruction, 
-        tools: needsSearch ? [{ googleSearch: {} }] : [],
-        ...(isThinkingMode ? { thinkingConfig: { thinkingBudget: 32768 } } : {})
+        ...(isThinkingMode ? { thinkingConfig: { thinkingBudget: 15000 } } : {}) // Reduced budget for faster thinking
       }
     });
 
-    let thinkingText = "";
-    if (response.candidates?.[0]?.content?.parts) {
-      for (const part of response.candidates[0].content.parts) {
-        if ("thought" in part && part.thought) {
-          thinkingText += part.thought;
+    let fullText = "";
+    let fullThinking = "";
+    let groundingChunks: any[] = [];
+
+    for await (const chunk of responseStream) {
+      const c = chunk as GenerateContentResponse;
+      
+      // Use the recommended .text getter for speed and safety
+      const text = c.text;
+      if (text) {
+        fullText += text;
+      }
+
+      // Check for thinking parts if in pro mode
+      if (isThinkingMode) {
+        const parts = c.candidates?.[0]?.content?.parts;
+        if (parts) {
+          for (const p of parts) {
+            if ("thought" in p && p.thought) {
+              fullThinking += p.thought;
+            }
+          }
         }
       }
+      
+      if (c.candidates?.[0]?.groundingMetadata?.groundingChunks) {
+        groundingChunks = c.candidates[0].groundingMetadata.groundingChunks;
+      }
+      
+      onChunk(fullText, fullThinking);
     }
 
-    return {
-      text: response.text || FALLBACK_MESSAGE,
-      modelName,
-      groundingChunks: response.candidates?.[0]?.groundingMetadata?.groundingChunks,
-      thinking: thinkingText || undefined
-    };
+    return { modelName, groundingChunks };
   } catch (err) {
-    console.error("Neural Link Error:", err);
-    return { text: FALLBACK_MESSAGE, modelName };
+    console.error("Stream Error:", err);
+    onChunk(FALLBACK_MESSAGE);
+    return { modelName };
   }
 };
 
@@ -105,21 +111,18 @@ export const speakResponse = async (text: string) => {
     if (!globalAudioCtx) {
       globalAudioCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
     }
-    if (globalAudioCtx.state === 'suspended') {
-      await globalAudioCtx.resume();
-    }
+    if (globalAudioCtx.state === 'suspended') await globalAudioCtx.resume();
 
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash-preview-tts",
-      contents: [{ parts: [{ text: `Respond clearly: ${text}` }] }],
+      contents: [{ parts: [{ text: `Quickly: ${text}` }] }],
       config: {
         responseModalities: [Modality.AUDIO],
         speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Puck' } } },
       },
     });
 
-    const parts = response.candidates?.[0]?.content?.parts;
-    const audioData = parts?.find(p => p.inlineData?.data)?.inlineData?.data;
+    const audioData = response.candidates?.[0]?.content?.parts.find(p => p.inlineData)?.inlineData?.data;
 
     if (audioData && globalAudioCtx) {
       const audioBuffer = await decodeAudioData(decode(audioData), globalAudioCtx, 24000, 1);
@@ -129,6 +132,6 @@ export const speakResponse = async (text: string) => {
       source.start();
     }
   } catch (err) {
-    console.warn("TTS Synthesis Offline");
+    console.warn("TTS Failed");
   }
 };

@@ -14,14 +14,11 @@ const AiLabScreen: React.FC<AiLabScreenProps> = ({ user, tasks }) => {
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isThinkingMode, setIsThinkingMode] = useState(false);
+  const [dynamicSuggestions, setDynamicSuggestions] = useState<string[]>([]);
   
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  const quickCommands = [
-    { label: "Optimize My Day", prompt: "Dr. Rudhh, look at my schedule and suggest one tactical improvement for today." },
-    { label: "Study Strategy", prompt: "Suggest a scientifically proven study method for one of my active academic tasks." },
-    { label: "Motivation Check", prompt: "I am feeling low energy. Provide a tactical psychological boost to keep me in the mission." }
-  ];
+  const initialSuggestions = ["Optimize Day", "Study Help", "Motivation"];
 
   useEffect(() => {
     const data = api.getData();
@@ -31,15 +28,16 @@ const AiLabScreen: React.FC<AiLabScreenProps> = ({ user, tasks }) => {
       setMessages([{ 
         id: '1', 
         role: 'model', 
-        text: `Commander ${user.name || 'Hero'}, I am Dr. Rudhh. Your cognitive throughput is currently my primary focus. How shall we refine your operational schedule?` 
+        text: `Dr. Rudhh online. Ready for tactical briefing.` 
       }]);
     }
-  }, [user.name]);
+    setDynamicSuggestions(initialSuggestions);
+  }, []);
 
   useEffect(() => {
     if (messages.length > 0) api.updateChatHistory(messages);
     if (scrollRef.current) {
-      scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [messages]);
 
@@ -52,34 +50,42 @@ const AiLabScreen: React.FC<AiLabScreenProps> = ({ user, tasks }) => {
     setInput('');
     setIsLoading(true);
 
+    const botMsgId = (Date.now() + 1).toString();
+    const tempBotMsg: ChatMessage = { 
+      id: botMsgId, 
+      role: 'model', 
+      text: 'Linking...', 
+      modelUsed: isThinkingMode ? 'PRO' : 'FLASH' 
+    };
+    setMessages(prev => [...prev, tempBotMsg]);
+
     try {
-      const contextHistory = messages.slice(-8).map(m => ({
+      const contextHistory = messages.slice(-4).map(m => ({
         role: m.role,
         parts: [{ text: m.text }]
       }));
       
-      const response = await gemini.chatWithRudhh(
+      const { modelName, groundingChunks } = await gemini.chatWithRudhhStream(
         textToSend, 
         contextHistory, 
         isThinkingMode,
-        tasks
+        tasks,
+        (text, thinking) => {
+          setMessages(prev => prev.map(m => 
+            m.id === botMsgId ? { ...m, text, thinkingProcess: thinking } : m
+          ));
+        }
       );
+
+      setDynamicSuggestions(["Next step", "Simplify", "Explain"]);
       
-      const botMsg: ChatMessage = { 
-        id: (Date.now() + 1).toString(), 
-        role: 'model', 
-        text: response.text,
-        modelUsed: response.modelName,
-        groundingChunks: response.groundingChunks,
-        thinkingProcess: response.thinking
-      };
-      setMessages(prev => [...prev, botMsg]);
+      setMessages(prev => prev.map(m => 
+        m.id === botMsgId ? { ...m, modelUsed: modelName, groundingChunks } : m
+      ));
     } catch (err) {
-      setMessages(prev => [...prev, {
-        id: Date.now().toString(),
-        role: 'model',
-        text: "Neural link timeout. Signal weak. Re-engaging..."
-      }]);
+      setMessages(prev => prev.map(m => 
+        m.id === botMsgId ? { ...m, text: "Connection reset. Try again." } : m
+      ));
     } finally {
       setIsLoading(false);
     }
@@ -87,152 +93,85 @@ const AiLabScreen: React.FC<AiLabScreenProps> = ({ user, tasks }) => {
 
   return (
     <div className="flex flex-col h-[calc(100vh-180px)] animate-fadeIn">
-      {/* Dr. Rudhh Header & Mode Switch */}
-      <div className={`p-4 rounded-3xl border transition-all duration-700 mb-4 flex items-center justify-between ${
-        isThinkingMode 
-          ? 'bg-violet-950/20 border-violet-500/30 shadow-[0_0_30px_rgba(139,92,246,0.1)]' 
-          : 'bg-emerald-950/10 border-emerald-500/20'
+      {/* Tactical Status */}
+      <div className={`p-4 rounded-3xl border mb-4 flex items-center justify-between transition-colors ${
+        isThinkingMode ? 'bg-violet-950/20 border-violet-500/30' : 'bg-emerald-950/10 border-emerald-500/20'
       }`}>
         <div className="flex items-center gap-3">
-          <div className={`w-11 h-11 rounded-2xl flex items-center justify-center font-black text-xs transition-all ${
-            isThinkingMode ? 'bg-violet-600 text-white animate-pulse' : 'bg-emerald-600 text-white'
-          }`}>
-            DR
-          </div>
+          <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-black text-xs ${
+            isThinkingMode ? 'bg-violet-600 text-white animate-pulse' : 'bg-emerald-600 text-white shadow-lg shadow-emerald-900/40'
+          }`}>DR</div>
           <div>
-            <h4 className="font-black text-[11px] text-white uppercase tracking-widest">Tactical Mentor: Dr. Rudhh</h4>
-            <div className="flex items-center gap-1.5 mt-0.5">
-              <span className={`w-1.5 h-1.5 rounded-full ${isThinkingMode ? 'bg-violet-400 animate-ping' : 'bg-emerald-500'}`} />
-              <span className={`text-[8px] font-black uppercase tracking-widest ${isThinkingMode ? 'text-violet-400' : 'text-emerald-500'}`}>
-                {isThinkingMode ? 'Deep Neural Strategy Active' : 'Low Latency Direct Link'}
-              </span>
-            </div>
+            <h4 className="font-black text-[10px] text-white uppercase tracking-widest">Instant Link: {isThinkingMode ? 'Deep' : 'Flash'}</h4>
+            <p className="text-[7px] text-slate-500 font-bold uppercase tracking-widest">v3.3 Optimized</p>
           </div>
         </div>
         <button 
           onClick={() => setIsThinkingMode(!isThinkingMode)}
-          className={`px-3 py-2 rounded-xl text-[8px] font-black border uppercase tracking-tighter transition-all ${
-            isThinkingMode 
-              ? 'bg-violet-500 text-white border-violet-400 shadow-lg shadow-violet-500/20' 
-              : 'bg-slate-800 text-slate-400 border-slate-700 hover:text-white'
+          className={`px-3 py-1.5 rounded-lg text-[8px] font-black border uppercase tracking-tighter ${
+            isThinkingMode ? 'bg-violet-500 text-white' : 'bg-slate-800 text-slate-500 border-slate-700'
           }`}
         >
-          {isThinkingMode ? 'FAST LITE' : 'NEURAL PRO'}
+          {isThinkingMode ? 'PRO' : 'FLASH'}
         </button>
       </div>
 
-      {/* Main Chat Interface */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto space-y-6 pr-1 no-scrollbar pb-6 scroll-smooth">
+      {/* Terminal */}
+      <div ref={scrollRef} className="flex-1 overflow-y-auto space-y-4 no-scrollbar pb-4">
         {messages.map((m) => (
           <div key={m.id} className={`flex flex-col ${m.role === 'user' ? 'items-end' : 'items-start'}`}>
-            <div className={`max-w-[88%] p-5 rounded-3xl transition-all ${
-              m.role === 'user' 
-                ? 'bg-primary text-white rounded-br-none shadow-xl border border-white/10' 
-                : 'glass-card border-white/5 rounded-bl-none shadow-2xl bg-slate-900/40'
+            <div className={`max-w-[85%] p-4 rounded-2xl ${
+              m.role === 'user' ? 'bg-primary text-white rounded-br-none shadow-lg' : 'glass-card border-white/5 rounded-bl-none bg-slate-900/40'
             }`}>
-              {/* Thinking Trace (Internal Reasoning Visibility) */}
               {m.thinkingProcess && (
-                <div className="mb-4 bg-violet-600/5 border border-violet-500/10 p-3 rounded-2xl">
-                  <p className="text-[7px] font-black text-violet-400 uppercase tracking-[0.3em] mb-2 flex items-center gap-2">
-                    <span className="w-1 h-1 bg-violet-400 rounded-full animate-pulse" />
-                    Neural Trace Log
-                  </p>
-                  <p className="text-[10px] text-slate-400 italic leading-relaxed font-medium">
-                    {m.thinkingProcess}
-                  </p>
+                <div className="mb-2 bg-violet-600/5 border border-violet-500/10 p-2 rounded-xl text-[9px] text-slate-500 italic">
+                  {m.thinkingProcess}
                 </div>
               )}
-              
-              <div className="text-sm leading-relaxed whitespace-pre-wrap font-medium tracking-tight text-slate-100">
+              <div className="text-[12px] leading-relaxed font-medium text-slate-100">
                 {m.text}
               </div>
-
-              {/* Grounding Info (Search results) */}
-              {m.groundingChunks && m.groundingChunks.length > 0 && (
-                <div className="mt-4 pt-3 border-t border-white/5">
-                  <p className="text-[7px] font-black text-slate-500 uppercase tracking-widest mb-2">Validated Intelligence</p>
-                  <div className="flex flex-col gap-2">
-                    {m.groundingChunks.map((chunk, i) => chunk.web && (
-                      <a 
-                        key={i} 
-                        href={chunk.web.uri} 
-                        target="_blank" 
-                        rel="noreferrer"
-                        className="text-[9px] font-bold text-primary/80 hover:text-primary transition-colors flex items-center gap-2 bg-white/5 p-2 rounded-xl border border-white/5"
-                      >
-                        <span className="opacity-40">0{i+1}</span>
-                        <span className="truncate">{chunk.web.title || 'Intel Source'}</span>
-                      </a>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Action Bar for AI Messages */}
-              {m.role === 'model' && (
-                <div className="flex justify-between items-center mt-4 pt-3 border-t border-white/5 opacity-50 hover:opacity-100 transition-opacity">
-                  <button 
-                    onClick={() => gemini.speakResponse(m.text)} 
-                    className="text-[9px] font-black text-primary hover:text-white uppercase tracking-widest flex items-center gap-2"
-                  >
-                    Play Audio Briefing
-                  </button>
-                  <span className="text-[7px] text-slate-600 font-bold uppercase">
-                    {m.modelUsed?.includes('flash-lite') ? 'LITE CORE v2.5' : 'PRO NEURAL v3.0'}
-                  </span>
+              {m.role === 'model' && m.text && !isLoading && (
+                <div className="mt-3 pt-2 border-t border-white/5 flex gap-3">
+                  <button onClick={() => gemini.speakResponse(m.text)} className="text-[8px] font-black text-primary uppercase">Listen</button>
+                  <span className="text-[6px] text-slate-600 uppercase ml-auto">{m.modelUsed}</span>
                 </div>
               )}
             </div>
           </div>
         ))}
-        
-        {/* Loading State */}
-        {isLoading && (
-          <div className="flex justify-start">
-            <div className="glass-card p-4 px-6 rounded-3xl text-[9px] font-black text-slate-500 uppercase tracking-[0.4em] flex items-center gap-3">
-              <span className="flex gap-1">
-                <span className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce [animation-delay:-0.3s]" />
-                <span className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce [animation-delay:-0.15s]" />
-                <span className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce" />
-              </span>
-              Dr. Rudhh is synthesizing...
-            </div>
-          </div>
-        )}
       </div>
 
-      {/* Quick Command Chips */}
+      {/* Suggestions */}
       {!isLoading && (
-        <div className="flex gap-2 overflow-x-auto no-scrollbar pb-3 px-1">
-          {quickCommands.map((cmd, idx) => (
+        <div className="flex gap-2 overflow-x-auto no-scrollbar pb-3">
+          {dynamicSuggestions.map((label, idx) => (
             <button 
               key={idx}
-              onClick={() => handleSend(cmd.prompt)}
-              className="whitespace-nowrap bg-slate-900 border border-white/5 hover:border-primary/50 text-slate-400 hover:text-primary text-[8px] font-black uppercase tracking-widest px-4 py-2.5 rounded-2xl transition-all active:scale-95"
+              onClick={() => handleSend(label)}
+              className="bg-slate-900 border border-white/5 text-slate-400 text-[8px] font-black uppercase tracking-widest px-3 py-2 rounded-xl hover:text-primary"
             >
-              {cmd.label}
+              {label}
             </button>
           ))}
         </div>
       )}
 
-      {/* Input Console */}
-      <div className="flex items-center gap-2 bg-slate-950 p-2 rounded-[2rem] border border-white/5 shadow-2xl focus-within:border-primary/50 transition-colors">
+      {/* Input */}
+      <div className="flex items-center gap-2 bg-slate-950 p-2 rounded-[2rem] border border-white/10 shadow-2xl">
         <input 
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && handleSend()}
-          placeholder="ENTER COMMAND..."
-          className="flex-1 bg-transparent border-none p-4 text-sm focus:outline-none placeholder:text-slate-800 uppercase font-black tracking-widest text-white"
+          placeholder="SEND COMMAND..."
+          className="flex-1 bg-transparent border-none p-3 text-sm focus:outline-none placeholder:text-slate-800 uppercase font-black text-white"
         />
         <button 
           onClick={() => handleSend()} 
           disabled={isLoading || !input.trim()} 
-          className={`w-12 h-12 flex items-center justify-center rounded-full transition-all active:scale-90 shadow-lg disabled:opacity-20 ${
-            isThinkingMode ? 'bg-violet-600 shadow-violet-500/20' : 'bg-primary shadow-primary/20'
-          }`}
+          className={`w-10 h-10 flex items-center justify-center rounded-full ${isThinkingMode ? 'bg-violet-600' : 'bg-primary'}`}
         >
-          <span className="text-lg font-bold">➜</span>
+          <span className="text-sm font-bold">➜</span>
         </button>
       </div>
     </div>
